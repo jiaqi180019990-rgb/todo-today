@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#0052D9">
 <title>今日待办</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <style>
   :root {
     --brand: #0052D9;
@@ -18,31 +19,16 @@
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   html, body { margin: 0; padding: 0; }
   body {
-    background: var(--bg);
-    color: var(--text);
+    background: var(--bg); color: var(--text);
     font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
-    font-size: 16px;
-    line-height: 1.5;
-    min-height: 100vh;
+    font-size: 16px; line-height: 1.5; min-height: 100vh;
   }
-  .wrap {
-    max-width: 480px;
-    margin: 0 auto;
-    padding: 16px 16px calc(24px + env(safe-area-inset-bottom));
-  }
-  .card {
-    background: var(--card);
-    border-radius: 16px;
-    box-shadow: 0 2px 12px rgba(16, 24, 40, 0.06);
-    padding: 20px;
-  }
+  .wrap { max-width: 480px; margin: 0 auto; padding: 16px 16px calc(24px + env(safe-area-inset-bottom)); }
+  .card { background: var(--card); border-radius: 16px; box-shadow: 0 2px 12px rgba(16,24,40,.06); padding: 20px; }
   .head { display: flex; align-items: flex-end; justify-content: space-between; }
   h1 { font-size: 20px; margin: 0; letter-spacing: .5px; }
   .sub { color: var(--text-2); font-size: 13px; margin-top: 4px; }
-  .count {
-    font-size: 13px; color: var(--brand); background: var(--brand-weak);
-    border-radius: 999px; padding: 4px 12px; white-space: nowrap;
-  }
+  .count { font-size: 13px; color: var(--brand); background: var(--brand-weak); border-radius: 999px; padding: 4px 12px; white-space: nowrap; }
 
   .add { display: flex; gap: 10px; margin-top: 18px; }
   input[type="text"] {
@@ -69,14 +55,18 @@
   li.done .check svg { display: block; }
   .title { flex: 1; min-width: 0; word-break: break-word; }
   li.done .title { color: #A6ADB9; text-decoration: line-through; }
-  .del {
-    flex: none; width: 32px; height: 32px; border-radius: 8px; background: none;
-    color: #B6BCC7; font-size: 20px; line-height: 1; padding: 0;
-  }
+  .del { flex: none; width: 32px; height: 32px; border-radius: 8px; background: none; color: #B6BCC7; font-size: 20px; line-height: 1; padding: 0; }
   .del:active { background: #FDECEA; color: #D93026; }
   .empty { text-align: center; color: var(--text-2); font-size: 14px; padding: 36px 0 12px; }
   .hint { color: var(--text-2); font-size: 13px; margin-top: 10px; min-height: 20px; }
-  .note { color: #9AA3AF; font-size: 12px; margin-top: 18px; text-align: center; }
+
+  .status {
+    display: flex; align-items: center; justify-content: center; gap: 6px;
+    margin-top: 18px; font-size: 12px; color: var(--text-2);
+  }
+  .status .dot { width: 7px; height: 7px; border-radius: 50%; background: #34C759; }
+  .status.off .dot { background: #C6CDD8; }
+  .status button { background: none; color: var(--brand); font-size: 12px; height: auto; padding: 0 4px; text-decoration: underline; }
 </style>
 </head>
 <body>
@@ -99,7 +89,10 @@
     <ul id="list"></ul>
     <div id="empty" class="empty">今天还没有待办，添加第一项吧</div>
 
-    <div class="note">数据保存在这台设备的浏览器里</div>
+    <div id="status" class="status">
+      <span class="dot"></span><span id="statusText">正在连接…</span>
+      <button id="btnRetry" type="button" hidden>重试</button>
+    </div>
   </section>
 </div>
 
@@ -107,12 +100,19 @@
 (function () {
   "use strict";
 
-  var KEY = "todo_today_v1";
+  var SUPABASE_URL = "https://tlmuedzvqszbjtnpbxme.supabase.co";
+  var SUPABASE_KEY = "sb_publishable_EO6e40Yo7mnCwRoovDfomA_PcnSsGMU";
+  var STORE_KEY = "todo_today_v2";
+
   var $ = function (id) { return document.getElementById(id); };
   var inputEl = $("input"), listEl = $("list"), emptyEl = $("empty");
   var countEl = $("count"), msgEl = $("msg");
+  var statusEl = $("status"), statusText = $("statusText"), btnRetry = $("btnRetry");
 
+  var db = null;          // Supabase 客户端，null = 本地模式
   var todos = [];
+
+  /* ---------- 日期与本地缓存 ---------- */
 
   function todayStr() {
     var d = new Date();
@@ -120,23 +120,22 @@
     return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate());
   }
 
-  function readAll() {
+  function readStore() {
     try {
-      var raw = localStorage.getItem(KEY);
-      var obj = raw ? JSON.parse(raw) : null;
-      return (obj && typeof obj === "object") ? obj : {};
+      var o = JSON.parse(localStorage.getItem(STORE_KEY));
+      return (o && typeof o === "object") ? o : {};
     } catch (e) { return {}; }
   }
 
-  function persist() {
+  function saveLocal() {
     try {
-      var all = readAll();
-      all[todayStr()] = todos;
-      localStorage.setItem(KEY, JSON.stringify(all));
-    } catch (e) {
-      msgEl.textContent = "本地存储不可用，本次修改不会被保存";
-    }
+      var o = readStore();
+      o[todayStr()] = todos;
+      localStorage.setItem(STORE_KEY, JSON.stringify(o));
+    } catch (e) { /* 存储不可用时静默降级 */ }
   }
+
+  /* ---------- 渲染 ---------- */
 
   function remaining() {
     var n = 0;
@@ -178,7 +177,52 @@
     });
   }
 
-  function add() {
+  function setStatus(online, text) {
+    statusEl.className = online ? "status" : "status off";
+    statusText.textContent = text;
+  }
+
+  /* ---------- 云端 ---------- */
+
+  async function initCloud() {
+    setStatus(false, "正在连接…");
+    btnRetry.hidden = true;
+
+    if (typeof supabase === "undefined" || !supabase.createClient) {
+      setStatus(false, "本地模式（云服务未加载）");
+      btnRetry.hidden = false;
+      return;
+    }
+    try {
+      db = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+      var s = await db.auth.getSession();
+      if (!s.data || !s.data.session) {
+        var a = await db.auth.signInAnonymously();
+        if (a.error) throw a.error;
+      }
+
+      var res = await db.from("todos")
+        .select("id, title, done")
+        .eq("day", todayStr())
+        .order("created_at", { ascending: true })
+        .limit(200);
+      if (res.error) throw res.error;
+
+      todos = (res.data || []).map(function (r) {
+        return { id: r.id, title: r.title, done: r.done };
+      });
+      render();
+      saveLocal();
+      setStatus(true, "已同步到云端");
+    } catch (e) {
+      db = null;
+      setStatus(false, "本地模式（云端未连接）");
+      btnRetry.hidden = false;
+    }
+  }
+
+  async function add() {
     var title = (inputEl.value || "").trim();
     if (!title) {                       // 空白任务不添加
       msgEl.textContent = "请输入内容后再添加";
@@ -186,33 +230,54 @@
       return;
     }
     msgEl.textContent = "";
-    todos.push({ id: Date.now() + "-" + Math.random().toString(36).slice(2, 8), title: title, done: false });
+    var t = { id: "local-" + Date.now() + "-" + Math.random().toString(36).slice(2, 8), title: title, done: false };
+    todos.push(t);
     inputEl.value = "";
     render();
-    persist();
+    saveLocal();
+
+    if (!db) return;
+    var res = await db.from("todos").insert({ title: title, done: false, day: todayStr() }).select("id");
+    if (res.error || !res.data || !res.data.length) {
+      if (res.error) setStatus(false, "云端写入失败，已存本地");
+      return;
+    }
+    var i = todos.indexOf(t);
+    if (i > -1) todos[i] = { id: res.data[0].id, title: t.title, done: t.done };
+    saveLocal();
   }
 
-  function toggle(t) {
+  async function toggle(t) {
     t.done = !t.done;
     render();
-    persist();
+    saveLocal();
+    if (!db || typeof t.id !== "number") return;
+    var res = await db.from("todos").update({ done: t.done }).eq("id", t.id).select("id");
+    if (res.error) setStatus(false, "云端更新失败，已存本地");
   }
 
-  function remove(t) {
+  async function remove(t) {
     var i = todos.indexOf(t);
     if (i > -1) todos.splice(i, 1);
     render();
-    persist();
+    saveLocal();
     msgEl.textContent = "";
+    if (!db || typeof t.id !== "number") return;
+    var res = await db.from("todos").delete().eq("id", t.id).select("id");
+    if (res.error) setStatus(false, "云端删除失败，已存本地");
   }
 
+  /* ---------- 启动 ---------- */
+
   $("btnAdd").onclick = add;
+  btnRetry.onclick = initCloud;
   inputEl.onkeydown = function (e) { if (e.key === "Enter") add(); };
 
-  var all = readAll();
-  todos = Array.isArray(all[todayStr()]) ? all[todayStr()] : [];
+  var store = readStore();
+  todos = Array.isArray(store[todayStr()]) ? store[todayStr()] : [];
   $("today").textContent = todayStr();
   render();
+  initCloud();
 })();
 </script>
 </body>
