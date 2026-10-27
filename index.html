@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0052D9">
+<title>今日待办</title>
+<style>
+  :root {
+    --brand: #0052D9;
+    --brand-weak: #E8F0FE;
+    --bg: #F4F6FA;
+    --card: #FFFFFF;
+    --text: #1A1C1F;
+    --text-2: #6B7280;
+    --line: #ECEFF4;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    font-size: 16px;
+    line-height: 1.5;
+    min-height: 100vh;
+  }
+  .wrap {
+    max-width: 480px;
+    margin: 0 auto;
+    padding: 16px 16px calc(24px + env(safe-area-inset-bottom));
+  }
+  .card {
+    background: var(--card);
+    border-radius: 16px;
+    box-shadow: 0 2px 12px rgba(16, 24, 40, 0.06);
+    padding: 20px;
+  }
+  .head { display: flex; align-items: flex-end; justify-content: space-between; }
+  h1 { font-size: 20px; margin: 0; letter-spacing: .5px; }
+  .sub { color: var(--text-2); font-size: 13px; margin-top: 4px; }
+  .count {
+    font-size: 13px; color: var(--brand); background: var(--brand-weak);
+    border-radius: 999px; padding: 4px 12px; white-space: nowrap;
+  }
+
+  .add { display: flex; gap: 10px; margin-top: 18px; }
+  input[type="text"] {
+    width: 100%; height: 46px; padding: 0 14px; font-size: 16px;
+    color: var(--text); background: #F7F8FA; border: 1px solid var(--line);
+    border-radius: 10px; outline: none; -webkit-appearance: none;
+  }
+  input:focus { border-color: var(--brand); background: #fff; }
+  button { font-family: inherit; font-size: 16px; border: none; border-radius: 10px; cursor: pointer; }
+  .add input { flex: 1; min-width: 0; }
+  .add button { flex: none; width: 76px; height: 46px; background: var(--brand); color: #fff; }
+  .add button:active { background: #0043B3; }
+
+  ul { list-style: none; margin: 16px 0 0; padding: 0; }
+  li { display: flex; align-items: center; gap: 12px; padding: 12px 2px; border-top: 1px solid var(--line); }
+  li:first-child { border-top: none; }
+  .check {
+    flex: none; width: 24px; height: 24px; border-radius: 50%;
+    border: 2px solid #C6CDD8; background: #fff; padding: 0;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .check svg { display: none; width: 14px; height: 14px; }
+  li.done .check { background: var(--brand); border-color: var(--brand); }
+  li.done .check svg { display: block; }
+  .title { flex: 1; min-width: 0; word-break: break-word; }
+  li.done .title { color: #A6ADB9; text-decoration: line-through; }
+  .del {
+    flex: none; width: 32px; height: 32px; border-radius: 8px; background: none;
+    color: #B6BCC7; font-size: 20px; line-height: 1; padding: 0;
+  }
+  .del:active { background: #FDECEA; color: #D93026; }
+  .empty { text-align: center; color: var(--text-2); font-size: 14px; padding: 36px 0 12px; }
+  .hint { color: var(--text-2); font-size: 13px; margin-top: 10px; min-height: 20px; }
+  .note { color: #9AA3AF; font-size: 12px; margin-top: 18px; text-align: center; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <section class="card">
+    <div class="head">
+      <div>
+        <h1>今日待办</h1>
+        <div id="today" class="sub"></div>
+      </div>
+      <div id="count" class="count">剩余 0 项</div>
+    </div>
+
+    <div class="add">
+      <input id="input" type="text" maxlength="80" placeholder="添加一件要做的事">
+      <button id="btnAdd" type="button">添加</button>
+    </div>
+    <div id="msg" class="hint"></div>
+
+    <ul id="list"></ul>
+    <div id="empty" class="empty">今天还没有待办，添加第一项吧</div>
+
+    <div class="note">数据保存在这台设备的浏览器里</div>
+  </section>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  var KEY = "todo_today_v1";
+  var $ = function (id) { return document.getElementById(id); };
+  var inputEl = $("input"), listEl = $("list"), emptyEl = $("empty");
+  var countEl = $("count"), msgEl = $("msg");
+
+  var todos = [];
+
+  function todayStr() {
+    var d = new Date();
+    var p = function (n) { return (n < 10 ? "0" : "") + n; };
+    return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate());
+  }
+
+  function readAll() {
+    try {
+      var raw = localStorage.getItem(KEY);
+      var obj = raw ? JSON.parse(raw) : null;
+      return (obj && typeof obj === "object") ? obj : {};
+    } catch (e) { return {}; }
+  }
+
+  function persist() {
+    try {
+      var all = readAll();
+      all[todayStr()] = todos;
+      localStorage.setItem(KEY, JSON.stringify(all));
+    } catch (e) {
+      msgEl.textContent = "本地存储不可用，本次修改不会被保存";
+    }
+  }
+
+  function remaining() {
+    var n = 0;
+    for (var i = 0; i < todos.length; i++) { if (!todos[i].done) n++; }
+    return n;
+  }
+
+  function render() {
+    listEl.innerHTML = "";
+    countEl.textContent = "剩余 " + remaining() + " 项";
+    emptyEl.hidden = todos.length > 0;
+
+    todos.forEach(function (t) {
+      var li = document.createElement("li");
+      li.className = t.done ? "done" : "";
+
+      var check = document.createElement("button");
+      check.className = "check";
+      check.type = "button";
+      check.setAttribute("aria-label", t.done ? "标记为未完成" : "标记为已完成");
+      check.innerHTML = '<svg viewBox="0 0 16 16" fill="none"><path d="M3.5 8.5l3 3 6-7" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+      check.onclick = function () { toggle(t); };
+
+      var span = document.createElement("div");
+      span.className = "title";
+      span.textContent = t.title;
+
+      var del = document.createElement("button");
+      del.className = "del";
+      del.type = "button";
+      del.setAttribute("aria-label", "删除");
+      del.textContent = "×";
+      del.onclick = function () { remove(t); };
+
+      li.appendChild(check);
+      li.appendChild(span);
+      li.appendChild(del);
+      listEl.appendChild(li);
+    });
+  }
+
+  function add() {
+    var title = (inputEl.value || "").trim();
+    if (!title) {                       // 空白任务不添加
+      msgEl.textContent = "请输入内容后再添加";
+      inputEl.focus();
+      return;
+    }
+    msgEl.textContent = "";
+    todos.push({ id: Date.now() + "-" + Math.random().toString(36).slice(2, 8), title: title, done: false });
+    inputEl.value = "";
+    render();
+    persist();
+  }
+
+  function toggle(t) {
+    t.done = !t.done;
+    render();
+    persist();
+  }
+
+  function remove(t) {
+    var i = todos.indexOf(t);
+    if (i > -1) todos.splice(i, 1);
+    render();
+    persist();
+    msgEl.textContent = "";
+  }
+
+  $("btnAdd").onclick = add;
+  inputEl.onkeydown = function (e) { if (e.key === "Enter") add(); };
+
+  var all = readAll();
+  todos = Array.isArray(all[todayStr()]) ? all[todayStr()] : [];
+  $("today").textContent = todayStr();
+  render();
+})();
+</script>
+</body>
+</html>
